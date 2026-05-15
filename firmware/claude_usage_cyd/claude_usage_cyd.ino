@@ -43,6 +43,11 @@
 #include <TFT_eSPI.h>
 #include "time.h"
 
+// ── Touch (XPT2046 IRQ pin) ──────────────────────────────────
+// GPIO 36 is T_IRQ on CYD — goes LOW when screen is pressed.
+// Input-only on ESP32; relies on XPT2046 hardware pull-up.
+#define T_IRQ 36
+
 // ============================================================
 //  USER CONFIGURATION
 // ============================================================
@@ -94,6 +99,12 @@ bool   g_hasData    = false;
 unsigned long g_lastRefresh = 0;
 int    g_errorCode  = 0;      // last HTTP error (0 = none)
 
+// ── Sleep / change-detection state ──────────────────────────
+static const int  SLEEP_AFTER  = 5;
+int               g_noChangeCnt = 0;
+bool              g_sleeping   = false;
+unsigned long     g_lastWakeMs = 0;
+
 // ── Forward declarations ─────────────────────────────────────
 bool     fetchOrgId();
 bool     fetchUsage();
@@ -106,6 +117,9 @@ void     drawBar(int x, int y, int bw, int bh, float pct,
 uint16_t usageColor(float pct);
 String   timeUntil(const String& iso);
 void     splashStatus(const String& msg, uint16_t color = C_WHITE);
+void     sleepDisplay();
+void     wakeDisplay();
+bool     isTouched();
 
 // ============================================================
 //  SETUP
@@ -116,6 +130,7 @@ void setup() {
   // Backlight on
   pinMode(TFT_BL, OUTPUT);
   digitalWrite(TFT_BL, HIGH);
+  pinMode(T_IRQ, INPUT);   // XPT2046 touch interrupt (input-only GPIO)
 
   tft.init();
   tft.setRotation(1);   // Landscape: 320 wide × 240 tall
@@ -168,7 +183,14 @@ void setup() {
 //  LOOP
 // ============================================================
 void loop() {
-  // Re-try org ID if we never got it
+  // ── Touch-to-wake ──────────────────────────────────────────
+  if (g_sleeping && isTouched() && millis() - g_lastWakeMs > 600) {
+    g_lastWakeMs = millis();
+    wakeDisplay();
+    return;
+  }
+
+  // ── Retry org ID if not yet obtained ──────────────────────
   if (g_orgId.isEmpty()) {
     if (millis() - g_lastRefresh > 15000) {
       fetchOrgId();
@@ -177,15 +199,49 @@ void loop() {
     return;
   }
 
-  if (millis() - g_lastRefresh >= REFRESH_MS) {
-    g_lastRefresh = millis();
-    if (fetchUsage()) {
-      drawScreen();
-    } else {
-      // Redraw with error indicator but keep old data visible
-      drawScreen();
-    }
+  // ── Periodic data fetch ────────────────────────────────────
+  if (millis() - g_lastRefresh < REFRESH_MS) return;
+  g_lastRefresh = millis();
+
+  bool  hadData  = g_hasData;
+  float prevSess = g_session;
+  float prevWeek = g_weekly;
+
+  if (!fetchUsage()) {
+    // Fetch failed — redraw error state if awake, don't count as no-change
+    if (!g_sleeping) drawScreen();
+    return;
   }
+
+  // First-ever successful fetch always counts as changed
+  bool changed = !hadData
+    || fabsf(g_session - prevSess) > 0.05f
+    || fabsf(g_weekly  - prevWeek) > 0.05f;
+
+  if (changed) {
+    g_noChangeCnt = 0;
+    if (g_sleeping) wakeDisplay(); else drawScreen();
+  } else {
+    g_noChangeCnt++;
+    if (!g_sleeping && g_noChangeCnt >= SLEEP_AFTER) sleepDisplay();
+  }
+}
+
+// ── Display sleep / wake helpers ────────────────────────────
+void sleepDisplay() {
+  g_sleeping = true;
+  digitalWrite(TFT_BL, LOW);
+}
+
+void wakeDisplay() {
+  g_sleeping    = false;
+  g_noChangeCnt = 0;
+  digitalWrite(TFT_BL, HIGH);
+  drawScreen();
+}
+
+bool isTouched() {
+  return digitalRead(T_IRQ) == LOW;
 }
 
 // ============================================================

@@ -40,6 +40,11 @@
 #include <TFT_eSPI.h>
 #include "time.h"
 
+// ── Touch (XPT2046 IRQ pin) ──────────────────────────────────
+// GPIO 36 is T_IRQ on CYD — goes LOW when screen is pressed.
+// Input-only on ESP32; relies on XPT2046 hardware pull-up.
+#define T_IRQ 36
+
 // ============================================================
 //  PATCHABLE CREDENTIAL FIELDS
 //  Do NOT edit these manually — use the Web Flasher instead.
@@ -92,6 +97,14 @@ bool   g_hasData = false;
 unsigned long g_lastRefresh = 0;
 int    g_errorCode = 0;
 
+// ── Sleep / change-detection state ──────────────────────────
+// How many consecutive polls must return unchanged data before
+// the display is turned off.
+static const int  SLEEP_AFTER  = 5;
+int               g_noChangeCnt = 0;   // consecutive no-change polls
+bool              g_sleeping   = false;
+unsigned long     g_lastWakeMs = 0;    // debounce touch wake
+
 // ── Forward declarations ─────────────────────────────────────
 bool     fetchOrgId();
 bool     fetchUsage();
@@ -102,12 +115,16 @@ void     drawBar(int x, int y, int bw, int bh, float pct, uint16_t color);
 uint16_t usageColor(float pct);
 String   timeUntil(const String& iso);
 void     splashStatus(const String& msg, uint16_t color = TFT_WHITE);
+void     sleepDisplay();
+void     wakeDisplay();
+bool     isTouched();
 
 // ============================================================
 void setup() {
   Serial.begin(115200);
   pinMode(TFT_BL, OUTPUT);
   digitalWrite(TFT_BL, HIGH);
+  pinMode(T_IRQ, INPUT);   // XPT2046 touch interrupt (input-only GPIO)
 
   tft.init();
   tft.setRotation(1);
@@ -155,15 +172,71 @@ void setup() {
 }
 
 void loop() {
+  // ── Touch-to-wake ──────────────────────────────────────────
+  // Check continuously so touch is responsive even during sleep.
+  if (g_sleeping && isTouched() && millis() - g_lastWakeMs > 600) {
+    g_lastWakeMs = millis();
+    wakeDisplay();
+    return;
+  }
+
+  // ── Retry org ID if not yet obtained ──────────────────────
   if (g_orgId.isEmpty()) {
     if (millis() - g_lastRefresh > 15000) { fetchOrgId(); g_lastRefresh = millis(); }
     return;
   }
-  if (millis() - g_lastRefresh >= REFRESH_MS) {
-    g_lastRefresh = millis();
-    fetchUsage();
-    drawScreen();
+
+  // ── Periodic data fetch ────────────────────────────────────
+  if (millis() - g_lastRefresh < REFRESH_MS) return;
+  g_lastRefresh = millis();
+
+  bool   hadData  = g_hasData;
+  float  prevSess = g_session;
+  float  prevWeek = g_weekly;
+
+  if (!fetchUsage()) {
+    // Fetch failed — redraw error state if awake, don't count as no-change
+    if (!g_sleeping) drawScreen();
+    return;
   }
+
+  // First-ever successful fetch always counts as changed
+  bool changed = !hadData
+    || fabsf(g_session - prevSess) > 0.05f
+    || fabsf(g_weekly  - prevWeek) > 0.05f;
+
+  if (changed) {
+    g_noChangeCnt = 0;
+    Serial.printf("[DBG] Data changed → redraw (sess %.1f→%.1f  week %.1f→%.1f)\n",
+                  prevSess, g_session, prevWeek, g_weekly);
+    if (g_sleeping) wakeDisplay(); else drawScreen();
+  } else {
+    g_noChangeCnt++;
+    Serial.printf("[DBG] No change #%d/%d\n", g_noChangeCnt, SLEEP_AFTER);
+    if (!g_sleeping && g_noChangeCnt >= SLEEP_AFTER) sleepDisplay();
+    // If already sleeping, keep sleeping — background polling continues
+  }
+}
+
+// ── Display sleep / wake helpers ────────────────────────────
+void sleepDisplay() {
+  Serial.println("[DBG] Sleeping display — no change for " + String(SLEEP_AFTER) + " polls");
+  g_sleeping = true;
+  digitalWrite(TFT_BL, LOW);   // backlight off
+}
+
+void wakeDisplay() {
+  Serial.println("[DBG] Waking display");
+  g_sleeping    = false;
+  g_noChangeCnt = 0;
+  digitalWrite(TFT_BL, HIGH);  // backlight on
+  drawScreen();
+}
+
+// Returns true when screen is being physically touched.
+// T_IRQ is active-LOW; no internal pull-up (input-only GPIO).
+bool isTouched() {
+  return digitalRead(T_IRQ) == LOW;
 }
 
 // ============================================================
