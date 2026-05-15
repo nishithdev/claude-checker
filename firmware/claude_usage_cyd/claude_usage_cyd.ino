@@ -123,7 +123,7 @@ void setup() {
   tft.fillScreen(C_BG);
 
   // Splash — mascot + title
-  drawClaudeMascot(W / 2, 72, 24);
+  drawClaudeMascot(W / 2, 70, 5);
   tft.setTextColor(C_ACCENT, C_BG);
   tft.setTextDatum(MC_DATUM);
   tft.setTextSize(2);
@@ -301,18 +301,32 @@ bool fetchUsage() {
 //  r=9  → fits the 26px header bar
 //  r=24 → splash-screen hero icon
 // ============================================================
-void drawClaudeMascot(int cx, int cy, int r) {
-  tft.fillCircle(cx, cy, r, C_ACCENT);
-  // Eyes
-  int ex = r/3 + 1, ey = r/4 + 1, er = max(1, r/4);
-  tft.fillCircle(cx-ex, cy-ey, er,          C_WHITE);
-  tft.fillCircle(cx+ex, cy-ey, er,          C_WHITE);
-  tft.fillCircle(cx-ex, cy-ey, max(1,er/2), C_HDR);
-  tft.fillCircle(cx+ex, cy-ey, max(1,er/2), C_HDR);
-  // Smile — two-segment V opening upward (happy curve)
-  int sw = r/2, sy = r*2/5, depth = r/4;
-  tft.drawLine(cx-sw, cy+sy-depth, cx,    cy+sy,        C_WHITE);
-  tft.drawLine(cx,    cy+sy,       cx+sw, cy+sy-depth,  C_WHITE);
+// Draw Claw'd — Claude's pixel-art mascot.
+// cx, cy = center of body,  u = unit pixel size
+//   Header call: drawClaudeMascot(13, 13, 2)  →  20×16 px total
+//   Splash call: drawClaudeMascot(W/2, 70, 5) →  50×40 px total
+void drawClaudeMascot(int cx, int cy, int u) {
+  const uint16_t CLAY = 0xCB08;   // terracotta coral ≈ #C86040
+  const uint16_t DARK = C_BG;     // eye fill
+
+  int bw = 8*u, bh = 6*u;
+  int bx = cx - bw/2, by = cy - bh/2;
+
+  // Body
+  tft.fillRect(bx, by, bw, bh, CLAY);
+
+  // Eyes — square dark cutouts, ≈1.5u each
+  int ew = max(2, u + u/2);
+  tft.fillRect(bx + u,           by + u, ew, ew, DARK);
+  tft.fillRect(bx + bw - u - ew, by + u, ew, ew, DARK);
+
+  // Arms — u×2u stubs on each side at body mid-height
+  tft.fillRect(bx - u,  by + bh/2 - u, u, 2*u, CLAY);
+  tft.fillRect(bx + bw, by + bh/2 - u, u, 2*u, CLAY);
+
+  // Legs — 2u×2u at bottom, inset 1u from body edges
+  tft.fillRect(bx + u,        by + bh, 2*u, 2*u, CLAY);
+  tft.fillRect(bx + bw - 3*u, by + bh, 2*u, 2*u, CLAY);
 }
 
 // ============================================================
@@ -324,7 +338,7 @@ void drawScreen() {
   // ── Header bar ─────────────────────────────────────────────
   tft.fillRect(0, 0, W, 26, C_HDR);
   // Small mascot in header (left side)
-  drawClaudeMascot(13, 13, 9);
+  drawClaudeMascot(13, 13, 2);
   tft.setTextColor(C_ACCENT, C_HDR);
   tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
