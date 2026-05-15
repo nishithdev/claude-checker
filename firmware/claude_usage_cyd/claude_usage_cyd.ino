@@ -66,14 +66,20 @@ TFT_eSPI tft = TFT_eSPI();
 static const int W  = 320;
 static const int H  = 240;
 
-// Palette
-static const uint16_t C_BG       = TFT_BLACK;
-static const uint16_t C_HDR      = 0x0228;  // deep navy
-static const uint16_t C_ACCENT   = 0x07FF;  // cyan
+// Palette — Claude warm theme
+// C_BG      ≈ #1C1817  very dark warm charcoal
+// C_HDR     ≈ #2A2420  slightly lighter warm header
+// C_ACCENT  ≈ #FF8C00  Claude warm amber
+// C_DIM     ≈ #8A8888  muted warm gray
+// C_DIVIDER ≈ #323030  subtle warm divider
+// C_BAR_BG  ≈ #201C1C  dark bar background
+static const uint16_t C_BG       = 0x18C2;
+static const uint16_t C_HDR      = 0x2924;
+static const uint16_t C_ACCENT   = 0xFC60;
 static const uint16_t C_WHITE    = TFT_WHITE;
-static const uint16_t C_DIM      = 0x8410;  // medium grey
-static const uint16_t C_DIVIDER  = 0x2124;  // dark grey
-static const uint16_t C_BAR_BG   = 0x2104;  // bar track
+static const uint16_t C_DIM      = 0x8C51;
+static const uint16_t C_DIVIDER  = 0x3186;
+static const uint16_t C_BAR_BG   = 0x2104;
 static const uint16_t C_GREEN    = 0x07E0;
 static const uint16_t C_YELLOW   = 0xFFE0;
 static const uint16_t C_ORANGE   = 0xFD20;
@@ -93,6 +99,7 @@ int    g_errorCode  = 0;      // last HTTP error (0 = none)
 bool     fetchOrgId();
 bool     fetchUsage();
 void     drawScreen();
+void     drawClaudeMascot(int cx, int cy, int r);
 void     drawSection(int y, int h, const char* label,
                      float pct, const char* sub);
 void     drawBar(int x, int y, int bw, int bh, float pct,
@@ -115,14 +122,15 @@ void setup() {
   tft.setRotation(1);   // Landscape: 320 wide × 240 tall
   tft.fillScreen(C_BG);
 
-  // Splash
+  // Splash — mascot + title
+  drawClaudeMascot(W / 2, 72, 24);
   tft.setTextColor(C_ACCENT, C_BG);
   tft.setTextDatum(MC_DATUM);
   tft.setTextSize(2);
-  tft.drawString("CLAUDE USAGE", W / 2, H / 2 - 16);
+  tft.drawString("CLAUDE USAGE", W / 2, H / 2 + 8);
   tft.setTextColor(C_DIM, C_BG);
   tft.setTextSize(1);
-  tft.drawString("ESP32 Cheap Yellow Display", W / 2, H / 2 + 8);
+  tft.drawString("ESP32 Cheap Yellow Display", W / 2, H / 2 + 30);
 
   // WiFi
   splashStatus("Connecting to WiFi...");
@@ -264,7 +272,7 @@ bool fetchUsage() {
     return false;
   }
 
-  DynamicJsonDocument doc(4096);
+  DynamicJsonDocument doc(8192);
   DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
 
@@ -273,19 +281,38 @@ bool fetchUsage() {
     return false;
   }
 
-  // Debug: dump to serial
-  Serial.print("[usage] five_hour.utilization_pct = ");
-  Serial.println(doc["five_hour"]["utilization_pct"].as<float>());
-
-  g_session  = doc["five_hour"]["utilization_pct"]   | 0.0f;
-  g_weekly   = doc["seven_day"]["utilization_pct"]   | 0.0f;
-  g_opus     = doc["seven_day_opus"]["utilization_pct"] | 0.0f;
-  g_resetAt  = doc["five_hour"]["reset_at"].as<String>();
+  g_session = doc["five_hour"]["utilization"]      | 0.0f;
+  g_weekly  = doc["seven_day"]["utilization"]      | 0.0f;
+  // seven_day_opus may be null on newer API; fall back to seven_day_omelette (Opus 4)
+  if (!doc["seven_day_opus"].isNull())
+    g_opus = doc["seven_day_opus"]["utilization"]      | 0.0f;
+  else
+    g_opus = doc["seven_day_omelette"]["utilization"]  | 0.0f;
+  g_resetAt = doc["five_hour"]["resets_at"].as<String>();
   if (g_resetAt == "null") g_resetAt = "";
 
   g_hasData     = true;
   g_lastRefresh = millis();
   return true;
+}
+
+// ============================================================
+//  Claude mascot: amber circle face with white eyes and smile.
+//  r=9  → fits the 26px header bar
+//  r=24 → splash-screen hero icon
+// ============================================================
+void drawClaudeMascot(int cx, int cy, int r) {
+  tft.fillCircle(cx, cy, r, C_ACCENT);
+  // Eyes
+  int ex = r/3 + 1, ey = r/4 + 1, er = max(1, r/4);
+  tft.fillCircle(cx-ex, cy-ey, er,          C_WHITE);
+  tft.fillCircle(cx+ex, cy-ey, er,          C_WHITE);
+  tft.fillCircle(cx-ex, cy-ey, max(1,er/2), C_HDR);
+  tft.fillCircle(cx+ex, cy-ey, max(1,er/2), C_HDR);
+  // Smile — two-segment V opening upward (happy curve)
+  int sw = r/2, sy = r*2/5, depth = r/4;
+  tft.drawLine(cx-sw, cy+sy-depth, cx,    cy+sy,        C_WHITE);
+  tft.drawLine(cx,    cy+sy,       cx+sw, cy+sy-depth,  C_WHITE);
 }
 
 // ============================================================
@@ -296,10 +323,12 @@ void drawScreen() {
 
   // ── Header bar ─────────────────────────────────────────────
   tft.fillRect(0, 0, W, 26, C_HDR);
+  // Small mascot in header (left side)
+  drawClaudeMascot(13, 13, 9);
   tft.setTextColor(C_ACCENT, C_HDR);
   tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString("  \xBB CLAUDE USAGE", 0, 13);  // >> symbol
+  tft.drawString("CLAUDE USAGE", 28, 13);
 
   // Clock (top-right)
   struct tm ti;

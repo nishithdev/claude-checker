@@ -66,12 +66,18 @@ const long          TZ_OFFSET_SEC = 0;    // e.g. UTC+5:30 = 19800
 TFT_eSPI tft = TFT_eSPI();
 static const int W = 320, H = 240;
 
-// Palette
-static const uint16_t C_BG      = TFT_BLACK;
-static const uint16_t C_HDR     = 0x0228;
-static const uint16_t C_ACCENT  = 0x07FF;
-static const uint16_t C_DIM     = 0x8410;
-static const uint16_t C_DIVIDER = 0x2124;
+// Palette — Claude warm theme
+// C_BG      ≈ #1C1817  very dark warm charcoal
+// C_HDR     ≈ #2A2420  slightly lighter warm header
+// C_ACCENT  ≈ #FF8C00  Claude warm amber
+// C_DIM     ≈ #8A8888  muted warm gray
+// C_DIVIDER ≈ #323030  subtle warm divider
+// C_BAR_BG  ≈ #201C1C  dark bar background
+static const uint16_t C_BG      = 0x18C2;
+static const uint16_t C_HDR     = 0x2924;
+static const uint16_t C_ACCENT  = 0xFC60;
+static const uint16_t C_DIM     = 0x8C51;
+static const uint16_t C_DIVIDER = 0x3186;
 static const uint16_t C_BAR_BG  = 0x2104;
 static const uint16_t C_GREEN   = 0x07E0;
 static const uint16_t C_YELLOW  = 0xFFE0;
@@ -90,6 +96,7 @@ int    g_errorCode = 0;
 bool     fetchOrgId();
 bool     fetchUsage();
 void     drawScreen();
+void     drawClaudeMascot(int cx, int cy, int r);
 void     drawSection(int y, int h, const char* label, float pct, const char* sub);
 void     drawBar(int x, int y, int bw, int bh, float pct, uint16_t color);
 uint16_t usageColor(float pct);
@@ -106,13 +113,15 @@ void setup() {
   tft.setRotation(1);
   tft.fillScreen(C_BG);
 
+  // Splash mascot + title
+  drawClaudeMascot(W/2, 72, 24);
   tft.setTextColor(C_ACCENT, C_BG);
   tft.setTextDatum(MC_DATUM);
   tft.setTextSize(2);
-  tft.drawString("CLAUDE USAGE", W/2, H/2 - 16);
+  tft.drawString("CLAUDE USAGE", W/2, H/2 + 8);
   tft.setTextColor(C_DIM, C_BG);
   tft.setTextSize(1);
-  tft.drawString("ESP32 CYD — Flashable Edition", W/2, H/2 + 8);
+  tft.drawString("ESP32 CYD  -  Flashable Edition", W/2, H/2 + 30);
 
   // Sanity check: if credentials are still markers, warn
   if ((uint8_t)WF_SSID[0] == 0xAA && (uint8_t)WF_SSID[1] == 0xBB) {
@@ -241,12 +250,33 @@ bool fetchUsage() {
 }
 
 // ============================================================
+// Claude mascot: amber circle face with white eyes and smile.
+// r=9  → fits the 26px header bar
+// r=24 → splash-screen hero icon
+void drawClaudeMascot(int cx, int cy, int r) {
+  tft.fillCircle(cx, cy, r, C_ACCENT);
+  // Eyes
+  int ex = r/3 + 1, ey = r/4 + 1, er = max(1, r/4);
+  tft.fillCircle(cx-ex, cy-ey, er,        TFT_WHITE);
+  tft.fillCircle(cx+ex, cy-ey, er,        TFT_WHITE);
+  tft.fillCircle(cx-ex, cy-ey, max(1,er/2), C_HDR);
+  tft.fillCircle(cx+ex, cy-ey, max(1,er/2), C_HDR);
+  // Smile — two-segment V opening upward (happy curve)
+  int sw = r/2, sy = r*2/5, depth = r/4;
+  tft.drawLine(cx-sw, cy+sy-depth, cx,    cy+sy,        TFT_WHITE);
+  tft.drawLine(cx,    cy+sy,       cx+sw, cy+sy-depth,  TFT_WHITE);
+}
+
 void drawScreen() {
   tft.fillScreen(C_BG);
+  // Header bar
   tft.fillRect(0, 0, W, 26, C_HDR);
+  // Small mascot in header (left side)
+  drawClaudeMascot(13, 13, 9);
+  // Title
   tft.setTextColor(C_ACCENT, C_HDR); tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString("  >> CLAUDE USAGE", 0, 13);
+  tft.drawString("CLAUDE USAGE", 28, 13);
 
   struct tm ti; char clk[9] = "--:--";
   if (getLocalTime(&ti)) sprintf(clk, "%02d:%02d", ti.tm_hour, ti.tm_min);
