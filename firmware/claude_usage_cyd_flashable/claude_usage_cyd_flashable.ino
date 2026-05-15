@@ -86,7 +86,7 @@ static const uint16_t C_RED     = 0xF800;
 
 // ── State ────────────────────────────────────────────────────
 String g_orgId   = "";
-float  g_session = 0, g_weekly = 0, g_opus = 0;
+float  g_session = 0, g_weekly = 0;
 String g_resetAt = "";
 bool   g_hasData = false;
 unsigned long g_lastRefresh = 0;
@@ -235,16 +235,11 @@ bool fetchUsage() {
   DynamicJsonDocument doc(8192);
   if (deserializeJson(doc, body)) { return false; }
 
-  g_session = doc["five_hour"]["utilization"]      | 0.0f;
-  g_weekly  = doc["seven_day"]["utilization"]      | 0.0f;
-  // seven_day_opus may be null; fall back to seven_day_omelette (Opus 4 codename)
-  if (!doc["seven_day_opus"].isNull())
-    g_opus = doc["seven_day_opus"]["utilization"] | 0.0f;
-  else
-    g_opus = doc["seven_day_omelette"]["utilization"] | 0.0f;
+  g_session = doc["five_hour"]["utilization"] | 0.0f;
+  g_weekly  = doc["seven_day"]["utilization"] | 0.0f;
   g_resetAt = doc["five_hour"]["resets_at"].as<String>();
   if (g_resetAt == "null") g_resetAt = "";
-  Serial.printf("[DBG] session=%.1f weekly=%.1f opus=%.1f\n", g_session, g_weekly, g_opus);
+  Serial.printf("[DBG] session=%.1f weekly=%.1f\n", g_session, g_weekly);
   g_hasData = true; g_lastRefresh = millis();
   return true;
 }
@@ -306,9 +301,8 @@ void drawScreen() {
   }
 
   String resetSub = g_resetAt.isEmpty() ? "" : "Resets in " + timeUntil(g_resetAt);
-  drawSection(26,  71, "5-HOUR SESSION",      g_session, resetSub.c_str());
-  drawSection(97,  71, "WEEKLY (ALL MODELS)", g_weekly,  "");
-  drawSection(168, 52, "WEEKLY OPUS/OPU4",    g_opus,    "");
+  drawSection(26,  97, "5-HOUR SESSION",      g_session, resetSub.c_str());
+  drawSection(123, 97, "WEEKLY (ALL MODELS)", g_weekly,  "");
 
   tft.setTextColor(C_DIVIDER, C_BG); tft.setTextDatum(MC_DATUM); tft.setTextSize(1);
   char foot[50];

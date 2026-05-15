@@ -89,7 +89,6 @@ static const uint16_t C_RED      = 0xF800;
 String g_orgId      = "";
 float  g_session    = 0.0f;   // five_hour utilization %
 float  g_weekly     = 0.0f;   // seven_day utilization %
-float  g_opus       = 0.0f;   // seven_day_opus utilization %
 String g_resetAt    = "";     // ISO 8601 reset timestamp
 bool   g_hasData    = false;
 unsigned long g_lastRefresh = 0;
@@ -281,13 +280,8 @@ bool fetchUsage() {
     return false;
   }
 
-  g_session = doc["five_hour"]["utilization"]      | 0.0f;
-  g_weekly  = doc["seven_day"]["utilization"]      | 0.0f;
-  // seven_day_opus may be null on newer API; fall back to seven_day_omelette (Opus 4)
-  if (!doc["seven_day_opus"].isNull())
-    g_opus = doc["seven_day_opus"]["utilization"]      | 0.0f;
-  else
-    g_opus = doc["seven_day_omelette"]["utilization"]  | 0.0f;
+  g_session = doc["five_hour"]["utilization"] | 0.0f;
+  g_weekly  = doc["seven_day"]["utilization"] | 0.0f;
   g_resetAt = doc["five_hour"]["resets_at"].as<String>();
   if (g_resetAt == "null") g_resetAt = "";
 
@@ -386,9 +380,8 @@ void drawScreen() {
     resetSub = "Resets in " + remaining;
   }
 
-  drawSection(26,  71, "5-HOUR SESSION",     g_session, resetSub.c_str());
-  drawSection(97,  71, "WEEKLY (ALL MODELS)", g_weekly,  "");
-  drawSection(168, 52, "WEEKLY OPUS",         g_opus,    "");
+  drawSection(26,  97, "5-HOUR SESSION",      g_session, resetSub.c_str());
+  drawSection(123, 97, "WEEKLY (ALL MODELS)", g_weekly,  "");
 
   // ── Footer ─────────────────────────────────────────────────
   tft.setTextColor(C_DIVIDER, C_BG);
