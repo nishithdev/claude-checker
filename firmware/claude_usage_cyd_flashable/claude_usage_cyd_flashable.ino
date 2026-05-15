@@ -280,9 +280,9 @@ void drawScreen() {
   // Small mascot in header (left side)
   drawClaudeMascot(13, 14, 2);
   // Title
-  tft.setTextColor(C_ACCENT, C_HDR); tft.setTextSize(1);
+  tft.setTextColor(C_ACCENT, C_HDR); tft.setTextSize(2);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString("CLAUDE USAGE", 28, 13);
+  tft.drawString("CLAUDE USAGE", 28, 14);
 
   struct tm ti; char clk[9] = "--:--";
   if (getLocalTime(&ti)) sprintf(clk, "%02d:%02d", ti.tm_hour, ti.tm_min);

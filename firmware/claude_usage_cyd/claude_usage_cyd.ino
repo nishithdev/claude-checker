@@ -334,7 +334,7 @@ void drawScreen() {
   // Small mascot in header (left side)
   drawClaudeMascot(13, 14, 2);
   tft.setTextColor(C_ACCENT, C_HDR);
-  tft.setTextSize(1);
+  tft.setTextSize(2);
   tft.setTextDatum(ML_DATUM);
   tft.drawString("CLAUDE USAGE", 28, 14);
 
