@@ -143,45 +143,20 @@ code{background:#0a0a1a;border:1px solid var(--border);border-radius:4px;
       <div class="ctitle">Display Settings</div>
       <div class="grid2">
         <div class="field">
-          <label>Timezone</label>
-          <select id="tz" onchange="sync()">
-            <option value="-43200">UTC&minus;12:00</option>
-            <option value="-36000">UTC&minus;10:00 (HST)</option>
-            <option value="-28800">UTC&minus;08:00 (PST)</option>
-            <option value="-25200">UTC&minus;07:00 (MST)</option>
-            <option value="-21600">UTC&minus;06:00 (CST)</option>
-            <option value="-18000">UTC&minus;05:00 (EST)</option>
-            <option value="-14400">UTC&minus;04:00 (AST)</option>
-            <option value="-10800">UTC&minus;03:00 (BRT)</option>
-            <option value="0" selected>UTC+00:00 (GMT)</option>
-            <option value="3600">UTC+01:00 (CET)</option>
-            <option value="7200">UTC+02:00 (EET)</option>
-            <option value="10800">UTC+03:00 (MSK)</option>
-            <option value="12600">UTC+03:30 (Tehran)</option>
-            <option value="14400">UTC+04:00 (GST)</option>
-            <option value="16200">UTC+04:30 (Kabul)</option>
-            <option value="18000">UTC+05:00 (PKT)</option>
-            <option value="19800">UTC+05:30 (IST)</option>
-            <option value="20700">UTC+05:45 (NPT)</option>
-            <option value="21600">UTC+06:00 (BST)</option>
-            <option value="25200">UTC+07:00 (ICT)</option>
-            <option value="28800">UTC+08:00 (SGT/HKT)</option>
-            <option value="32400">UTC+09:00 (JST/KST)</option>
-            <option value="34200">UTC+09:30 (ACST)</option>
-            <option value="36000">UTC+10:00 (AEST)</option>
-            <option value="39600">UTC+11:00 (AEDT)</option>
-            <option value="43200">UTC+12:00 (NZST)</option>
-            <option value="46800">UTC+13:00 (TOT)</option>
-          </select>
-        </div>
-        <div class="field">
           <label>Refresh interval</label>
-          <select id="refresh">
+          <select id="refresh" onchange="sync()">
             <option value="15000">15 seconds</option>
             <option value="30000" selected>30 seconds</option>
             <option value="60000">1 minute</option>
             <option value="120000">2 minutes</option>
           </select>
+        </div>
+        <div class="field">
+          <label>Timezone</label>
+          <div id="tzDisplay" style="padding:6px 0;color:var(--accent);font-size:13px">
+            detecting…
+          </div>
+          <div style="font-size:11px;color:var(--dim);margin-top:2px">Auto-detected from your browser</div>
         </div>
       </div>
     </div>
@@ -447,7 +422,6 @@ function saveConfig() {
       ssid:    document.getElementById('ssid').value,
       pass:    document.getElementById('pass').value,
       sess:    document.getElementById('sess').value,
-      tz:      document.getElementById('tz').value,
       refresh: document.getElementById('refresh').value,
       ori:     ori ? ori.value : '1',
     }));
@@ -463,7 +437,6 @@ function loadConfig() {
     if (cfg.ssid)    document.getElementById('ssid').value    = cfg.ssid;
     if (cfg.pass)    document.getElementById('pass').value    = cfg.pass;
     if (cfg.sess)    document.getElementById('sess').value    = cfg.sess;
-    if (cfg.tz)      document.getElementById('tz').value      = cfg.tz;
     if (cfg.refresh) document.getElementById('refresh').value = cfg.refresh;
     const oriEl = document.querySelector('input[name="orientation"][value="' + (cfg.ori||'1') + '"]');
     if (oriEl) oriEl.checked = true;
@@ -474,7 +447,6 @@ function loadConfig() {
 function clearConfig() {
   try { localStorage.removeItem(LS_KEY); } catch(e) {}
   ['ssid','pass','sess'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('tz').value      = '0';
   document.getElementById('refresh').value = '30000';
   const land = document.getElementById('ori-land');
   if (land) land.checked = true;
@@ -698,13 +670,32 @@ async function doFlash() {
   }
 }
 
+// Timezone auto-detection from browser
+// getTimezoneOffset() returns minutes WEST of UTC → negate and convert to seconds
+function getBrowserTzSec() {
+  return -(new Date().getTimezoneOffset()) * 60;
+}
+
+function showTzDisplay() {
+  const sec = getBrowserTzSec();
+  const h   = Math.floor(Math.abs(sec) / 3600);
+  const m   = Math.floor((Math.abs(sec) % 3600) / 60);
+  const sign = sec >= 0 ? '+' : '-';
+  const name = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const el = document.getElementById('tzDisplay');
+  if (el) el.textContent = 'UTC' + sign + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0')
+                           + (name ? '  (' + name + ')' : '');
+}
+
+document.addEventListener('DOMContentLoaded', showTzDisplay);
+
 // Download configured .ino
 function getConfig() {
   return {
     ssid:    document.getElementById('ssid').value || 'YOUR_WIFI_SSID',
     pass:    document.getElementById('pass').value || 'YOUR_WIFI_PASSWORD',
     sess:    document.getElementById('sess').value || 'sk-ant-sid01-XXXXXXXX',
-    tz:      document.getElementById('tz').value   || '0',
+    tz:      String(getBrowserTzSec()),
     refresh: document.getElementById('refresh').value || '30000',
   };
 }
