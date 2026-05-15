@@ -330,13 +330,13 @@ void drawScreen() {
   tft.fillScreen(C_BG);
 
   // ── Header bar ─────────────────────────────────────────────
-  tft.fillRect(0, 0, W, 26, C_HDR);
+  tft.fillRect(0, 0, W, 28, C_HDR);
   // Small mascot in header (left side)
-  drawClaudeMascot(13, 13, 2);
+  drawClaudeMascot(13, 14, 2);
   tft.setTextColor(C_ACCENT, C_HDR);
   tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString("CLAUDE USAGE", 28, 13);
+  tft.drawString("CLAUDE USAGE", 28, 14);
 
   // Clock (top-right)
   struct tm ti;
@@ -347,7 +347,7 @@ void drawScreen() {
   uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? C_GREEN : C_RED;
   tft.setTextColor(wifiCol, C_HDR);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString(String(clk) + "  ", W, 13);
+  tft.drawString(String(clk) + "  ", W, 14);
 
   // ── No-data placeholder ────────────────────────────────────
   if (!g_hasData) {
@@ -367,21 +367,12 @@ void drawScreen() {
     return;
   }
 
-  // ── Three usage sections ────────────────────────────────────
-  //  Divide the 214px below the header into 3 equal rows of ~71px,
-  //  minus 20px footer at the bottom.
-  //  y positions: 26, 97, 168  (each 71px tall)
-  //  footer: 220–240
-
-  // Compute reset sub-label
+  // Layout: header 28px | section1 96px | section2 96px | footer 20px = 240px
   String resetSub = "";
-  if (!g_resetAt.isEmpty()) {
-    String remaining = timeUntil(g_resetAt);
-    resetSub = "Resets in " + remaining;
-  }
+  if (!g_resetAt.isEmpty()) resetSub = "Resets in " + timeUntil(g_resetAt);
 
-  drawSection(26,  97, "5-HOUR SESSION",      g_session, resetSub.c_str());
-  drawSection(123, 97, "WEEKLY (ALL MODELS)", g_weekly,  "");
+  drawSection(28,  96, "5-HOUR SESSION",      g_session, resetSub.c_str());
+  drawSection(124, 96, "WEEKLY (ALL MODELS)", g_weekly,  "");
 
   // ── Footer ─────────────────────────────────────────────────
   tft.setTextColor(C_DIVIDER, C_BG);
@@ -389,45 +380,66 @@ void drawScreen() {
   tft.setTextSize(1);
   char foot[50];
   if (getLocalTime(&ti)) {
-    sprintf(foot, "Updated %02d:%02d:%02d  \xB7  refreshes every 30s",
+    sprintf(foot, "Updated %02d:%02d:%02d  -  30s refresh",
             ti.tm_hour, ti.tm_min, ti.tm_sec);
   } else {
     strcpy(foot, "Waiting for clock sync...");
   }
-  tft.drawString(foot, W / 2, 230);
+  tft.drawString(foot, W / 2, 232);
 }
 
 // ── One usage row ─────────────────────────────────────────────
-//   y = top of the section, h = section height
+// Layout per 96px section:
+//   y+ 9  label (textSize 1)
+//   y+37  percentage (textSize 4, 32px tall, datum centred → spans y+21..y+53)
+//   y+58  bar (24px tall → spans y+58..y+82)
+//   y+89  sub-label (textSize 1, only when present)
+//   y+94  divider line
+// When no sub-label, content is vertically centred within h.
 void drawSection(int y, int h, const char* label, float pct,
                  const char* sub) {
-  const int PAD  = 8;
-  const int BAR_H = 14;
+  const int PAD   = 10;
+  const int BAR_H = 24;
+  bool hasSub = sub && strlen(sub) > 0;
+  uint16_t col = usageColor(pct);
+  char buf[10];
+  sprintf(buf, "%.1f%%", pct);
+
+  int lY, pY, bY, sY;
+  if (hasSub) {
+    lY = y +  9;
+    pY = y + 37;
+    bY = y + 58;
+    sY = y + 89;
+  } else {
+    int pad = (h - 88) / 2;
+    lY = y + pad + 4;
+    pY = y + pad + 4 + 8 + 16 + 16;
+    bY = y + pad + 4 + 8 + 16 + 32 + 8;
+    sY = -1;
+  }
 
   // Label (dim, small)
   tft.setTextColor(C_DIM, C_BG);
   tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString(label, PAD, y + 10);
+  tft.drawString(label, PAD, lY);
 
-  // Percentage (large, color-coded)
-  uint16_t col = usageColor(pct);
-  char buf[10];
-  sprintf(buf, "%.1f%%", pct);
+  // Percentage (textSize 4, color-coded, right-aligned)
   tft.setTextColor(col, C_BG);
-  tft.setTextSize(2);
+  tft.setTextSize(4);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString(buf, W - PAD, y + 10);
+  tft.drawString(buf, W - PAD, pY);
 
   // Bar
-  drawBar(PAD, y + 22, W - PAD * 2, BAR_H, pct, col);
+  drawBar(PAD, bY, W - PAD * 2, BAR_H, pct, col);
 
-  // Sub-label (e.g. reset countdown)
-  if (sub && strlen(sub) > 0) {
+  // Sub-label
+  if (hasSub) {
     tft.setTextColor(C_DIM, C_BG);
     tft.setTextSize(1);
     tft.setTextDatum(ML_DATUM);
-    tft.drawString(sub, PAD, y + 42);
+    tft.drawString(sub, PAD, sY);
   }
 
   // Divider line at bottom of section

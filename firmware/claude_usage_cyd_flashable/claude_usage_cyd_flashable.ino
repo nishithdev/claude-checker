@@ -276,9 +276,9 @@ void drawClaudeMascot(int cx, int cy, int u) {
 void drawScreen() {
   tft.fillScreen(C_BG);
   // Header bar
-  tft.fillRect(0, 0, W, 26, C_HDR);
+  tft.fillRect(0, 0, W, 28, C_HDR);
   // Small mascot in header (left side)
-  drawClaudeMascot(13, 13, 2);
+  drawClaudeMascot(13, 14, 2);
   // Title
   tft.setTextColor(C_ACCENT, C_HDR); tft.setTextSize(1);
   tft.setTextDatum(ML_DATUM);
@@ -300,31 +300,67 @@ void drawScreen() {
     return;
   }
 
+  // Layout: header 28px | section1 96px | section2 96px | footer 20px = 240px
   String resetSub = g_resetAt.isEmpty() ? "" : "Resets in " + timeUntil(g_resetAt);
-  drawSection(26,  97, "5-HOUR SESSION",      g_session, resetSub.c_str());
-  drawSection(123, 97, "WEEKLY (ALL MODELS)", g_weekly,  "");
+  drawSection(28,  96, "5-HOUR SESSION",      g_session, resetSub.c_str());
+  drawSection(124, 96, "WEEKLY (ALL MODELS)", g_weekly,  "");
 
   tft.setTextColor(C_DIVIDER, C_BG); tft.setTextDatum(MC_DATUM); tft.setTextSize(1);
   char foot[50];
-  if (getLocalTime(&ti)) sprintf(foot, "Updated %02d:%02d:%02d  -  refreshes every 30s",
+  if (getLocalTime(&ti)) sprintf(foot, "Updated %02d:%02d:%02d  -  30s refresh",
                                   ti.tm_hour, ti.tm_min, ti.tm_sec);
-  tft.drawString(foot, W/2, 230);
+  tft.drawString(foot, W/2, 232);
 }
 
+// Layout per 96px section:
+//   y+ 9  label (textSize 1, 8px tall)
+//   y+37  percentage (textSize 4, 32px tall, centred at datum → spans y+21..y+53)
+//   y+58  bar (24px tall → spans y+58..y+82)
+//   y+89  sub-label (textSize 1) — only when present
+//   y+94  divider line
+// When no sub-label, content (8+24+32+24=88px) is vertically centred in h.
 void drawSection(int y, int h, const char* label, float pct, const char* sub) {
-  const int PAD=8, BAR_H=14;
-  tft.setTextColor(C_DIM, C_BG); tft.setTextSize(1);
-  tft.setTextDatum(ML_DATUM); tft.drawString(label, PAD, y+10);
+  const int PAD = 10, BAR_H = 24;
+  bool hasSub = sub && strlen(sub) > 0;
   uint16_t col = usageColor(pct);
   char buf[10]; sprintf(buf, "%.1f%%", pct);
-  tft.setTextColor(col, C_BG); tft.setTextSize(2);
-  tft.setTextDatum(MR_DATUM); tft.drawString(buf, W-PAD, y+10);
-  drawBar(PAD, y+22, W-PAD*2, BAR_H, pct, col);
-  if (sub && strlen(sub)) {
-    tft.setTextColor(C_DIM, C_BG); tft.setTextSize(1);
-    tft.setTextDatum(ML_DATUM); tft.drawString(sub, PAD, y+42);
+
+  int lY, pY, bY, sY;
+  if (hasSub) {
+    lY = y +  9;
+    pY = y + 37;   // textSize 4 datum centre → text spans pY-16 .. pY+16
+    bY = y + 58;   // bar top
+    sY = y + 89;
+  } else {
+    // vertically centre: content height = 8(label)+16(gap)+32(%)+8(gap)+24(bar) = 88px
+    int pad = (h - 88) / 2;
+    lY = y + pad + 4;
+    pY = y + pad + 4 + 8 + 16 + 16;  // label-centre + half-label + gap + half-%
+    bY = y + pad + 4 + 8 + 16 + 32 + 8;
+    sY = -1;
   }
-  tft.drawFastHLine(PAD, y+h-2, W-PAD*2, C_DIVIDER);
+
+  // Label
+  tft.setTextColor(C_DIM, C_BG); tft.setTextSize(1);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString(label, PAD, lY);
+
+  // Percentage — big, right-aligned
+  tft.setTextColor(col, C_BG); tft.setTextSize(4);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString(buf, W - PAD, pY);
+
+  // Bar
+  drawBar(PAD, bY, W - PAD*2, BAR_H, pct, col);
+
+  // Sub-label
+  if (hasSub) {
+    tft.setTextColor(C_DIM, C_BG); tft.setTextSize(1);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString(sub, PAD, sY);
+  }
+
+  tft.drawFastHLine(PAD, y + h - 2, W - PAD*2, C_DIVIDER);
 }
 
 void drawBar(int x, int y, int bw, int bh, float pct, uint16_t color) {
