@@ -80,10 +80,10 @@ static const uint16_t C_WHITE    = TFT_WHITE;
 static const uint16_t C_DIM      = 0x8C51;
 static const uint16_t C_DIVIDER  = 0x3186;
 static const uint16_t C_BAR_BG   = 0x2104;
-static const uint16_t C_GREEN    = 0x07E0;
-static const uint16_t C_YELLOW   = 0xFFE0;
-static const uint16_t C_ORANGE   = 0xFD20;
-static const uint16_t C_RED      = 0xF800;
+static const uint16_t C_GREEN    = 0x55CE;  // muted sage  ≈ #50B870
+static const uint16_t C_YELLOW   = 0xD504;  // warm honey  ≈ #D0A020
+static const uint16_t C_ORANGE   = 0xCB88;  // burnt sienna ≈ #C87040
+static const uint16_t C_RED      = 0xCA49;  // muted brick ≈ #C84848
 
 // ── State ────────────────────────────────────────────────────
 String g_orgId      = "";
