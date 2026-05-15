@@ -193,9 +193,13 @@ code{background:#0a0a1a;border:1px solid var(--border);border-radius:4px;
       <button class="btn btn-sec" onclick="dlSketch()">
         ↓ &nbsp;Download .ino source
       </button>
+      <button class="btn btn-sec" onclick="clearConfig()" title="Remove saved config from this browser">
+        🗑 &nbsp;Clear saved
+      </button>
+      <span id="savedBadge" style="font-size:12px;color:var(--accent);opacity:0;transition:opacity 0.4s;align-self:center"></span>
     </div>
     <p style="color:var(--dim);font-size:11px;margin-top:10px">
-      Credentials are patched into the pre-compiled firmware at flash time &mdash; nothing is stored in this page.
+      Credentials are patched into firmware at flash time. Settings are saved in this browser's localStorage so you don't need to re-type them — click <strong>Clear saved</strong> to remove them.
     </p>
   </div>
 
@@ -433,7 +437,65 @@ function syncFlashFields() {
   document.getElementById('f-sess').value = document.getElementById('sess').value;
 }
 
-function sync() {}
+// ── Saved config (localStorage) ───────────────────────────────
+const LS_KEY = 'cyd_cfg_v1';
+
+function saveConfig() {
+  const ori = document.querySelector('input[name="orientation"]:checked');
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      ssid:    document.getElementById('ssid').value,
+      pass:    document.getElementById('pass').value,
+      sess:    document.getElementById('sess').value,
+      tz:      document.getElementById('tz').value,
+      refresh: document.getElementById('refresh').value,
+      ori:     ori ? ori.value : '1',
+    }));
+    showSavedBadge();
+  } catch(e) {}
+}
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const cfg = JSON.parse(raw);
+    if (cfg.ssid)    document.getElementById('ssid').value    = cfg.ssid;
+    if (cfg.pass)    document.getElementById('pass').value    = cfg.pass;
+    if (cfg.sess)    document.getElementById('sess').value    = cfg.sess;
+    if (cfg.tz)      document.getElementById('tz').value      = cfg.tz;
+    if (cfg.refresh) document.getElementById('refresh').value = cfg.refresh;
+    const oriEl = document.querySelector('input[name="orientation"][value="' + (cfg.ori||'1') + '"]');
+    if (oriEl) oriEl.checked = true;
+    showSavedBadge(true);
+  } catch(e) {}
+}
+
+function clearConfig() {
+  try { localStorage.removeItem(LS_KEY); } catch(e) {}
+  ['ssid','pass','sess'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('tz').value      = '0';
+  document.getElementById('refresh').value = '30000';
+  const land = document.getElementById('ori-land');
+  if (land) land.checked = true;
+  const badge = document.getElementById('savedBadge');
+  if (badge) { badge.textContent = '🗑 Cleared'; badge.style.opacity = '1';
+    setTimeout(() => badge.style.opacity = '0', 1500); }
+  syncFlashFields();
+}
+
+function showSavedBadge(silent) {
+  const badge = document.getElementById('savedBadge');
+  if (!badge) return;
+  if (!silent) { badge.textContent = '✓ Saved'; badge.style.opacity = '1';
+    setTimeout(() => badge.style.opacity = '0', 1500); }
+  else { badge.textContent = '✓ Config loaded'; badge.style.opacity = '1';
+    setTimeout(() => badge.style.opacity = '0', 2500); }
+}
+
+function sync() { saveConfig(); syncFlashFields(); }
+
+document.addEventListener('DOMContentLoaded', loadConfig);
 
 function checkWebSerial() {
   const ok = 'serial' in navigator;
