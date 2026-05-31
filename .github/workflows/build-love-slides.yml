@@ -1,0 +1,93 @@
+name: Build & Deploy Love Slides Flasher
+
+on:
+  push:
+    paths:
+      - 'love-slides/firmware/**'
+      - 'love-slides/web-flasher/index.html'
+      - '.github/workflows/build-love-slides.yml'
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz \
+            | tar -xz -C /usr/local/bin arduino-cli
+          arduino-cli version
+
+      - name: Add ESP32 board index
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+
+      - name: Install ESP32 core
+        run: arduino-cli core install esp32:esp32
+
+      - name: Install TFT_eSPI library
+        run: arduino-cli lib install "TFT_eSPI"
+
+      - name: Patch TFT_eSPI User_Setup.h for CYD
+        run: |
+          LIB_PATH=$(arduino-cli config dump --format json \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['directories']['user'])")
+          cp love-slides/firmware/love_slides_cyd/User_Setup.h \
+             "$LIB_PATH/libraries/TFT_eSPI/User_Setup.h"
+          echo "Patched User_Setup.h at $LIB_PATH/libraries/TFT_eSPI/"
+
+      - name: Compile firmware
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --export-binaries \
+            love-slides/firmware/love_slides_cyd
+          echo "Build output:"
+          find love-slides/firmware/love_slides_cyd/build -name "*.bin" | sort
+
+      - name: Find merged binary
+        id: find_bin
+        run: |
+          # Prefer the merged binary (includes bootloader + partitions + app at 0x0)
+          BIN=$(find love-slides/firmware/love_slides_cyd/build -name "*.merged.bin" | head -1)
+          if [ -z "$BIN" ]; then
+            # Fall back to the plain app binary
+            BIN=$(find love-slides/firmware/love_slides_cyd/build -name "*.bin" | grep -v bootloader | grep -v partitions | head -1)
+          fi
+          echo "bin=$BIN" >> $GITHUB_OUTPUT
+          echo "Using binary: $BIN ($(wc -c < "$BIN") bytes)"
+
+      - name: Embed binary into web flasher
+        run: |
+          BIN="${{ steps.find_bin.outputs.bin }}"
+          B64=$(base64 -w 0 "$BIN")
+          echo "Base64 length: ${#B64}"
+
+          for FILE in love-slides/web-flasher/index.html docs/index.html; do
+            if [ -f "$FILE" ]; then
+              sed -i "s|const FIRMWARE_B64 = \"[^\"]*\";|const FIRMWARE_B64 = \"$B64\";|" "$FILE"
+              echo "✓ Embedded into $FILE"
+            fi
+          done
+
+      - name: Commit updated flasher
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html love-slides/web-flasher/index.html
+          if git diff --cached --quiet; then
+            echo "No changes to commit (binary unchanged)"
+          else
+            git commit -m "ci: embed compiled firmware binary [skip ci]"
+            git push
+          fi
