@@ -54,6 +54,19 @@ const char* SLIDES[10] = {
   MSG_06, MSG_07, MSG_08, MSG_09, MSG_10
 };
 
+static const char* DEFAULTS[10] = {
+  "Every moment with you is a gift I never want to return.",
+  "You are my favorite notification.",
+  "I fall a little more in love with you every single day.",
+  "Home is wherever I am with you.",
+  "You make ordinary days feel extraordinary.",
+  "Loving you is the best thing that ever happened to me.",
+  "You had me at hello, and you still have me every day since.",
+  "I choose you. Over and over, without pause, without a doubt.",
+  "Thank you for being exactly who you are.",
+  "You are my today and all of my tomorrows."
+};
+
 // ── Display ──────────────────────────────────────────────────────────────────
 TFT_eSPI tft = TFT_eSPI();
 static const int W = 320, H = 240;
@@ -175,16 +188,6 @@ void drawHeartRow(int y, int count, uint16_t col) {
 void drawSlide(int idx) {
   tft.fillScreen(C_BG);
 
-  // Check if still unpatched (marker bytes still present)
-  if ((uint8_t)SLIDES[idx][0] == 0xAA && (uint8_t)SLIDES[idx][1] == 0xBB) {
-    tft.setTextColor(TFT_RED, C_BG);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextSize(1);
-    tft.drawString("Messages not set!", W/2, H/2 - 10);
-    tft.drawString("Use the Web Flasher to enter your messages.", W/2, H/2 + 6);
-    return;
-  }
-
   // ── Header: big heart + slide counter ──
   drawHeart(W/2, 36, 22, C_HEART);
 
@@ -200,8 +203,9 @@ void drawSlide(int idx) {
   // Divider
   tft.drawFastHLine(16, 83, W - 32, C_LINE);
 
-  // ── Message text ──
-  const char* msg = SLIDES[idx];
+  // Use default message if this slot hasn't been patched via the Web Flasher
+  bool unpatched = ((uint8_t)SLIDES[idx][0] == 0xAA && (uint8_t)SLIDES[idx][1] == 0xBB);
+  const char* msg = unpatched ? DEFAULTS[idx] : SLIDES[idx];
   int textY = 93;
   int bottomY = drawWrapped(msg, 16, textY, W - 32, TFT_WHITE, 2);
 
@@ -221,32 +225,77 @@ void drawSlide(int idx) {
   }
 }
 
-// ── Splash screen ─────────────────────────────────────────────────────────────
-void drawSplash() {
+// ── Boot animation ────────────────────────────────────────────────────────────
+void animateSplash() {
   tft.fillScreen(C_BG);
 
-  // Scattered small hearts
-  drawHeart( 30,  30,  8, C_LINE);
-  drawHeart(290,  30,  8, C_LINE);
-  drawHeart( 30, 210,  8, C_LINE);
-  drawHeart(290, 210,  8, C_LINE);
-  drawHeart(160,  18,  6, C_LINE);
+  // Phase 1: central heart grows in, overshoots, settles
+  static const uint8_t kIntro[] = {5, 13, 21, 29, 37, 44, 40, 36};
+  int prevR = 0;
+  for (int i = 0; i < (int)(sizeof(kIntro) / sizeof(kIntro[0])); i++) {
+    int s = kIntro[i];
+    int clearR = max(s, prevR) + 6;
+    tft.fillRect(W/2 - clearR, 85 - clearR, 2 * clearR, 2 * clearR, C_BG);
+    drawHeart(W/2, 85, s, C_HEART);
+    prevR = s;
+    delay(65);
+  }
 
-  // Big central heart
-  drawHeart(W/2, 85, 36, C_HEART);
+  // Phase 2: corner accent hearts pop in
+  delay(80);
+  drawHeart( 30,  30, 8, C_LINE); delay(80);
+  drawHeart(290,  30, 8, C_LINE); delay(80);
+  drawHeart( 30, 210, 8, C_LINE); delay(80);
+  drawHeart(290, 210, 8, C_LINE); delay(80);
+  drawHeart(160,  18, 6, C_LINE); delay(80);
 
-  // Title
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(C_PINK, C_BG);
+  // Phase 3: title types in character by character
+  static const char kTitle[] = "A message for you";
   tft.setTextSize(2);
-  tft.drawString("A message for you", W/2, 140);
+  int titleX = (W - tft.textWidth(kTitle)) / 2;
+  int titleY = 132;
+  char buf[sizeof(kTitle)] = {};
+  for (int i = 0; kTitle[i]; i++) {
+    buf[i] = kTitle[i];
+    tft.fillRect(0, titleY, W, 18, C_BG);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(C_PINK, C_BG);
+    tft.drawString(buf, titleX, titleY);
+    delay(55);
+  }
 
+  // Phase 4: bottom heart row appears left to right
+  delay(120);
+  int spacing = W / 7;
+  for (int i = 0; i < 7; i++) {
+    drawHeart(spacing / 2 + i * spacing, 220, 5, C_LINE);
+    delay(70);
+  }
+
+  // Touch hint
+  delay(100);
   tft.setTextColor(C_DIM, C_BG);
+  tft.setTextDatum(MC_DATUM);
   tft.setTextSize(1);
   tft.drawString("touch to begin", W/2, 164);
 
-  // Bottom hearts row
-  drawHeartRow(220, 7, C_LINE);
+  // Idle heartbeat loop — keeps animating until the screen is touched
+  // Clears only the heart bounding box per frame so nothing else flickers
+  static const int8_t kBeat[] = {38, 41, 38, 36};
+  int beatR = 36;
+  while (!isTouched()) {
+    for (int b = 0; b < 4 && !isTouched(); b++) {
+      int s = kBeat[b];
+      int clearR = max(s, beatR) + 4;
+      tft.fillRect(W/2 - clearR, 85 - clearR, 2 * clearR, 2 * clearR, C_BG);
+      drawHeart(W/2, 85, s, C_HEART);
+      beatR = s;
+      delay(55);
+    }
+    // Rest between beats (~60 BPM)
+    unsigned long t = millis();
+    while (!isTouched() && millis() - t < 700) delay(20);
+  }
 }
 
 // ============================================================
@@ -259,11 +308,8 @@ void setup() {
   tft.init();
   tft.setRotation(1);   // landscape
 
-  drawSplash();
-
-  // Wait for the first touch before showing slide 1
-  while (!isTouched()) delay(30);
-  delay(350);  // debounce
+  animateSplash();
+  delay(350);  // debounce after touch
 
   g_slide = 0;
   drawSlide(g_slide);
