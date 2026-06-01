@@ -112,9 +112,10 @@ static const uint16_t C_DIM   = 0x8B4D;
 static const uint16_t C_LINE  = 0x4812;
 
 // ── State ────────────────────────────────────────────────────────────────────
-int           g_slide      = 0;
-unsigned long g_lastTouch  = 0;
-bool          g_hasSDPhoto = false;
+int           g_slide       = 0;
+unsigned long g_lastTouch   = 0;
+bool          g_hasSDPhoto  = false;
+int           g_totalSlides = 10;  // becomes 11 when a photo is available
 
 // ── Touch ────────────────────────────────────────────────────────────────────
 void touchSetup() {
@@ -252,6 +253,8 @@ void drawHeartRow(int y, int count, uint16_t col) {
 
 // ── Slide renderer ────────────────────────────────────────────────────────────
 void drawSlide(int idx) {
+  if (idx == 10) { drawPhotoSlide(); return; }
+
   tft.fillScreen(C_BG);
 
   // ── Header: big heart + slide counter ──
@@ -354,6 +357,46 @@ static bool trySDPhoto() {
   tft.fillScreen(C_BG);
   TJpgDec.drawSdJpg(ox, oy, "/photo.jpg");
   return true;
+}
+
+// ── Photo slide (slide 11) ────────────────────────────────────────────────────
+static void drawPhotoSlide() {
+  tft.fillScreen(C_BG);
+
+  if (g_hasSDPhoto) {
+    uint16_t jw = 0, jh = 0;
+    TJpgDec.setSwapBytes(true);
+    TJpgDec.setCallback(jpegCallback);
+    TJpgDec.getSdJpgSize(&jw, &jh, "/photo.jpg");
+    if (jw > 0) {
+      // Fill mode: largest scale where the image still covers the full screen
+      // (crop the overflow edges rather than leaving black bars)
+      uint8_t scale = 1;
+      while (scale * 2 <= 8
+             && (jw / (scale * 2) >= (uint16_t)W)
+             && (jh / (scale * 2) >= (uint16_t)H)) {
+        scale *= 2;
+      }
+      TJpgDec.setJpgScale(scale);
+      // Centre the oversized image — negative offsets crop symmetrically
+      int32_t ox = ((int32_t)W - jw / scale) / 2;
+      int32_t oy = ((int32_t)H - jh / scale) / 2;
+      TJpgDec.drawSdJpg(ox, oy, "/photo.jpg");
+    }
+  } else {
+    tft.pushImage(0, 0, IMG_W, IMG_H,
+      (uint16_t*)(const_cast<uint8_t*>(IMG_DATA) + 8));
+  }
+
+  // Text floats over the photo — C_BG background on each glyph keeps it readable
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_PINK, C_BG);
+  tft.setTextSize(2);
+  tft.drawString("with all my love", W/2, 222);
+
+  tft.setTextColor(C_DIM, C_BG);
+  tft.setTextSize(1);
+  tft.drawString("~ always, forever ~", W/2, 234);
 }
 
 // Redraw a photo rectangle — used to "erase" the heart between idle beat frames
@@ -577,6 +620,7 @@ void setup() {
   animateSplash();
   delay(350);  // debounce after touch
 
+  g_totalSlides = (g_hasSDPhoto || isImgPatched()) ? 11 : 10;
   g_slide = 0;
   drawSlide(g_slide);
 }
@@ -585,9 +629,9 @@ void loop() {
   if (isTouched() && millis() - g_lastTouch > 450) {
     g_lastTouch = millis();
     if (touchIsLeft()) {
-      g_slide = (g_slide - 1 + 10) % 10;
+      g_slide = (g_slide - 1 + g_totalSlides) % g_totalSlides;
     } else {
-      g_slide = (g_slide + 1) % 10;
+      g_slide = (g_slide + 1) % g_totalSlides;
     }
     drawSlide(g_slide);
   }
