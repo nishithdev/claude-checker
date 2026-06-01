@@ -115,6 +115,7 @@ static const uint16_t C_LINE  = 0x4812;
 int           g_slide       = 0;
 unsigned long g_lastTouch   = 0;
 bool          g_hasSDPhoto  = false;
+bool          g_sdMounted   = false;
 int           g_totalSlides = 10;  // becomes 11 when a photo is available
 
 // ── Touch ────────────────────────────────────────────────────────────────────
@@ -255,6 +256,13 @@ void drawHeartRow(int y, int count, uint16_t col) {
 void drawSlide(int idx) {
   if (idx == 10) { drawPhotoSlide(); return; }
 
+  // Per-slide photo: /slide1.jpg … /slide10.jpg on SD card
+  if (g_sdMounted) {
+    char fname[16];
+    snprintf(fname, sizeof(fname), "/slide%d.jpg", idx + 1);
+    if (SD.exists(fname)) { drawPhotoSlideMsg(idx); return; }
+  }
+
   tft.fillScreen(C_BG);
 
   // ── Header: big heart + slide counter ──
@@ -324,11 +332,11 @@ static bool trySDPhoto() {
     delay(1200);
     return false;
   }
+  g_sdMounted = true;  // SD stays mounted for per-slide photos
 
   if (!SD.exists("/photo.jpg")) {
-    sdStatus("photo.jpg not found on SD", 0xFFE0);
-    delay(1500);
-    SD.end();
+    sdStatus("No photo.jpg — slide photos still active", 0xFFE0);
+    delay(800);
     return false;
   }
 
@@ -397,6 +405,61 @@ static void drawPhotoSlide() {
   tft.setTextColor(C_DIM, C_BG);
   tft.setTextSize(1);
   tft.drawString("~ always, forever ~", W/2, 312);
+}
+
+// ── Per-slide photo + message ─────────────────────────────────────────────────
+// Renders /slideN.jpg full-screen with the message text overlaid on top.
+static void drawPhotoSlideMsg(int idx) {
+  tft.fillScreen(C_BG);
+
+  char fname[16];
+  snprintf(fname, sizeof(fname), "/slide%d.jpg", idx + 1);
+
+  // Fill-mode JPEG display (same as drawPhotoSlide)
+  TJpgDec.setSwapBytes(true);
+  TJpgDec.setCallback(jpegCallback);
+  uint16_t jw = 0, jh = 0;
+  TJpgDec.getSdJpgSize(&jw, &jh, fname);
+  if (jw > 0) {
+    uint8_t scale = 1;
+    while (scale * 2 <= 8
+           && jw / (scale * 2) >= (uint16_t)W
+           && jh / (scale * 2) >= (uint16_t)H) scale *= 2;
+    TJpgDec.setJpgScale(scale);
+    int32_t ox = ((int32_t)W - jw / scale) / 2;
+    int32_t oy = ((int32_t)H - jh / scale) / 2;
+    TJpgDec.drawSdJpg(ox, oy, fname);
+  }
+
+  // Dark header bar: heart + slide dots (solid so they're always readable)
+  tft.fillRect(0, 0, W, 66, C_BG);
+  drawHeart(W/2, 20, 15, C_HEART);
+
+  int dotW = 8, dotGap = 4;
+  int totalDotW = 10 * (dotW + dotGap) - dotGap;
+  int dotX = (W - totalDotW) / 2;
+  for (int i = 0; i < 10; i++)
+    tft.fillCircle(dotX + i*(dotW+dotGap) + dotW/2, 48, dotW/2,
+                   (i == idx) ? C_PINK : C_LINE);
+  tft.drawFastHLine(10, 58, W - 20, C_LINE);
+
+  // Message text — per-glyph C_BG background keeps it readable over any photo
+  bool unpatched = ((uint8_t)SLIDES[idx][0] == 0xAA && (uint8_t)SLIDES[idx][1] == 0xBB);
+  const char* msg = unpatched ? DEFAULTS[idx] : SLIDES[idx];
+  drawWrapped(msg, 10, 70, W - 20, TFT_WHITE, 2);
+
+  // Footer
+  const int footerY = H - 18;
+  tft.drawFastHLine(10, footerY - 6, W - 20, C_LINE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+  if (idx < 9) {
+    tft.setTextColor(C_DIM, C_BG);
+    tft.drawString("~ touch to continue ~", W/2, footerY + 2);
+  } else {
+    tft.setTextColor(C_PINK, C_BG);
+    tft.drawString("~ with all my love ~", W/2, footerY + 2);
+  }
 }
 
 // Redraw a photo rectangle — used to "erase" the heart between idle beat frames
