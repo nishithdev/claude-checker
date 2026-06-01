@@ -33,8 +33,12 @@
 
 #include <TFT_eSPI.h>
 
-// XPT2046 touch IRQ — goes LOW when screen is pressed (input-only GPIO)
-#define T_IRQ 36
+// XPT2046 touch — IRQ on input-only GPIO, bit-bang SPI on VSPI pins
+#define T_IRQ  36
+#define T_CLK  25
+#define T_DIN  32
+#define T_OUT  39
+// TOUCH_CS (33) is defined in User_Setup.h
 
 // ── Patchable message slots ──────────────────────────────────────────────────
 // Do NOT edit these manually — use the Web Flasher instead.
@@ -88,8 +92,46 @@ static const uint16_t C_LINE  = 0x4812;
 int           g_slide    = 0;
 unsigned long g_lastTouch = 0;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Touch ────────────────────────────────────────────────────────────────────
+void touchSetup() {
+  pinMode(T_CLK,    OUTPUT); digitalWrite(T_CLK, LOW);
+  pinMode(T_DIN,    OUTPUT);
+  pinMode(T_OUT,    INPUT);
+  pinMode(TOUCH_CS, OUTPUT); digitalWrite(TOUCH_CS, HIGH);
+  pinMode(T_IRQ,    INPUT);
+}
+
 bool isTouched() { return digitalRead(T_IRQ) == LOW; }
+
+// Bit-bang SPI read from XPT2046 — bypasses hardware SPI to avoid bus conflicts.
+// cmd 0x91 = Y-channel (maps to screen X in landscape), 0xD1 = X-channel.
+static uint16_t touchRaw(uint8_t cmd) {
+  digitalWrite(TOUCH_CS, LOW);
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(T_DIN, (cmd >> i) & 1);
+    digitalWrite(T_CLK, HIGH); delayMicroseconds(1);
+    digitalWrite(T_CLK, LOW);  delayMicroseconds(1);
+  }
+  uint16_t v = 0;
+  for (int i = 15; i >= 0; i--) {
+    digitalWrite(T_CLK, HIGH); delayMicroseconds(1);
+    if (digitalRead(T_OUT)) v |= (1 << i);
+    digitalWrite(T_CLK, LOW);  delayMicroseconds(1);
+  }
+  digitalWrite(TOUCH_CS, HIGH);
+  return (v >> 3) & 0xFFF;
+}
+
+// Screen X in landscape comes from XPT2046 Y-channel.
+// Must use PD=00 (command 0x90) so PENIRQ is re-enabled after each conversion —
+// any other PD setting disables T_IRQ, breaking all subsequent touches.
+// High raw value → left side of screen. Average 4 reads for stability.
+static bool touchIsLeft() {
+  delay(2);
+  uint32_t sum = 0;
+  for (int i = 0; i < 4; i++) { sum += touchRaw(0x90); delayMicroseconds(200); }
+  return (sum / 4) < 2048;
+}
 
 // Draw a pixel-art heart centered at (cx, cy) with outer radius r
 void drawHeart(int cx, int cy, int r, uint16_t col) {
@@ -303,7 +345,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(TFT_BL, OUTPUT);
   digitalWrite(TFT_BL, HIGH);
-  pinMode(T_IRQ, INPUT);
+  touchSetup();
 
   tft.init();
   tft.setRotation(1);   // landscape
@@ -318,7 +360,11 @@ void setup() {
 void loop() {
   if (isTouched() && millis() - g_lastTouch > 450) {
     g_lastTouch = millis();
-    g_slide = (g_slide + 1) % 10;
+    if (touchIsLeft()) {
+      g_slide = (g_slide - 1 + 10) % 10;
+    } else {
+      g_slide = (g_slide + 1) % 10;
+    }
     drawSlide(g_slide);
   }
   delay(20);
