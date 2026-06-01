@@ -77,10 +77,10 @@ static const char* DEFAULTS[10] = {
 };
 
 // ── Photo slot ───────────────────────────────────────────────────────────────
-// Full-screen 320×240 RGB565 image patched in by the Web Flasher.
+// Full-screen 240×320 RGB565 image patched in by the Web Flasher (portrait).
 // Marker byte [7] is '1' (unpatched) or '2' (patched).
-#define IMG_W     320
-#define IMG_H     240
+#define IMG_W     240
+#define IMG_H     320
 #define IMG_BYTES (IMG_W * IMG_H * 2)
 
 // PROGMEM keeps this in flash (153 KB is too large for DRAM).
@@ -96,7 +96,7 @@ bool isImgPatched() {
 
 // ── Display ──────────────────────────────────────────────────────────────────
 TFT_eSPI tft = TFT_eSPI();
-static const int W = 320, H = 240;
+static const int W = 240, H = 320;
 
 // Romantic color palette (RGB565)
 // C_BG      ≈ #0D0012  deep dark plum
@@ -154,8 +154,8 @@ static uint16_t touchRaw(uint8_t cmd) {
 static bool touchIsLeft() {
   delay(2);
   uint32_t sum = 0;
-  for (int i = 0; i < 4; i++) { sum += touchRaw(0x90); delayMicroseconds(200); }
-  return (sum / 4) < 2048;
+  for (int i = 0; i < 4; i++) { sum += touchRaw(0xD0); delayMicroseconds(200); }
+  return (sum / 4) > 2048;
 }
 
 // Draw a pixel-art heart centered at (cx, cy) with outer radius r
@@ -392,11 +392,11 @@ static void drawPhotoSlide() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(C_PINK, C_BG);
   tft.setTextSize(2);
-  tft.drawString("with all my love", W/2, 222);
+  tft.drawString("with all my love", W/2, 296);
 
   tft.setTextColor(C_DIM, C_BG);
   tft.setTextSize(1);
-  tft.drawString("~ always, forever ~", W/2, 234);
+  tft.drawString("~ always, forever ~", W/2, 312);
 }
 
 // Redraw a photo rectangle — used to "erase" the heart between idle beat frames
@@ -451,8 +451,8 @@ void animateSplash() {
 
   // ── SD card photo path ──────────────────────────────────────────────────────
   if (g_hasSDPhoto) {
-    const int STRIP_Y = 188;   // solid dark strip starts here
-    const int HEART_Y = 200;   // heart centre inside the strip
+    const int STRIP_Y = 264;   // solid dark strip starts here (portrait 320px)
+    const int HEART_Y = 276;   // heart centre inside the strip
     idleHeartY = HEART_Y;
 
     // Photo is already on screen (drawn by trySDPhoto).
@@ -496,8 +496,8 @@ void animateSplash() {
   // ── Binary flash photo path ─────────────────────────────────────────────────
   } else if (hasBinPhoto) {
     const int HEART_Y = 90;
-    const int GRAD_Y  = 192;
-    const int SOLID_Y = 218;
+    const int GRAD_Y  = 260;
+    const int SOLID_Y = 276;
     idleHeartY = HEART_Y;
 
     // Sweep binary photo in top-to-bottom
@@ -541,28 +541,28 @@ void animateSplash() {
 
   // ── Heart-only path ─────────────────────────────────────────────────────────
   } else {
-    idleHeartY = 85;
+    idleHeartY = 130;
 
     static const uint8_t kIntro[] = {5, 13, 21, 29, 37, 44, 40, 36};
     int prevR = 0;
     for (int i = 0; i < (int)(sizeof(kIntro) / sizeof(kIntro[0])); i++) {
       int s = kIntro[i]; int clearR = max(s, prevR) + 6;
-      tft.fillRect(W/2 - clearR, 85 - clearR, 2*clearR, 2*clearR, C_BG);
-      drawHeart(W/2, 85, s, C_HEART);
+      tft.fillRect(W/2 - clearR, 130 - clearR, 2*clearR, 2*clearR, C_BG);
+      drawHeart(W/2, 130, s, C_HEART);
       prevR = s; delay(65);
     }
 
     delay(80);
-    drawHeart( 30,  30, 8, C_LINE); delay(80);
-    drawHeart(290,  30, 8, C_LINE); delay(80);
-    drawHeart( 30, 210, 8, C_LINE); delay(80);
-    drawHeart(290, 210, 8, C_LINE); delay(80);
-    drawHeart(160,  18, 6, C_LINE); delay(80);
+    drawHeart( 25,  25, 8, C_LINE); delay(80);
+    drawHeart(215,  25, 8, C_LINE); delay(80);
+    drawHeart( 25, 295, 8, C_LINE); delay(80);
+    drawHeart(215, 295, 8, C_LINE); delay(80);
+    drawHeart(120,  16, 6, C_LINE); delay(80);
 
     static const char kTitle[] = "Hey Preethi,";
     tft.setTextSize(2);
     int titleX = (W - tft.textWidth(kTitle)) / 2;
-    int titleY = 132;
+    int titleY = 200;
     char tbuf[sizeof(kTitle)] = {};
     for (int i = 0; kTitle[i]; i++) {
       tbuf[i] = kTitle[i];
@@ -575,12 +575,12 @@ void animateSplash() {
 
     delay(120);
     int spc = W / 7;
-    for (int i = 0; i < 7; i++) { drawHeart(spc/2 + i*spc, 220, 5, C_LINE); delay(70); }
+    for (int i = 0; i < 7; i++) { drawHeart(spc/2 + i*spc, 290, 5, C_LINE); delay(70); }
     delay(100);
     tft.setTextColor(C_DIM, C_BG);
     tft.setTextDatum(MC_DATUM);
     tft.setTextSize(1);
-    tft.drawString("touch to begin", W/2, 164);
+    tft.drawString("touch to begin", W/2, 240);
   }
 
   // ── Idle heartbeat — all paths ──────────────────────────────────────────────
@@ -615,7 +615,7 @@ void setup() {
   touchSetup();
 
   tft.init();
-  tft.setRotation(1);   // landscape
+  tft.setRotation(0);   // portrait
 
   animateSplash();
   delay(350);  // debounce after touch
