@@ -64,13 +64,13 @@ const char* SLIDES[10] = {
 };
 
 static const char* DEFAULTS[10] = {
-  "Every moment with you is a gift I never want to return.",
-  "You are my favorite notification.",
+  "Remember our first offical date",
+  "First family function",
   "I fall a little more in love with you every single day.",
   "Home is wherever I am with you.",
   "You make ordinary days feel extraordinary.",
   "Loving you is the best thing that ever happened to me.",
-  "You had me at hello, and you still have me every day since.",
+  "A day is not enough to show all the love for you",
   "I choose you. Over and over, without pause, without a doubt.",
   "Thank you for being exactly who you are.",
   "Day 180 together. Each one better than the last. You are my home, my adventure, and my calm. Happy 180, Preethi."
@@ -431,7 +431,12 @@ static void drawPhotoSlideMsg(int idx) {
     TJpgDec.drawSdJpg(ox, oy, fname);
   }
 
-  // Dark header bar: heart + slide dots (solid so they're always readable)
+  // Slides 2, 6, 7 (0-indexed: 1, 5, 6) show text at the bottom
+  static const bool kTextBottom[10] = {false, true, false, false, false,
+                                        true,  true, false, true,  false};
+  bool textBottom = kTextBottom[idx];
+
+  // Dark header bar: heart + slide dots
   tft.fillRect(0, 0, W, 66, C_BG);
   drawHeart(W/2, 20, 15, C_HEART);
 
@@ -443,14 +448,20 @@ static void drawPhotoSlideMsg(int idx) {
                    (i == idx) ? C_PINK : C_LINE);
   tft.drawFastHLine(10, 58, W - 20, C_LINE);
 
-  // Message text — per-glyph C_BG background keeps it readable over any photo
   bool unpatched = ((uint8_t)SLIDES[idx][0] == 0xAA && (uint8_t)SLIDES[idx][1] == 0xBB);
   const char* msg = unpatched ? DEFAULTS[idx] : SLIDES[idx];
-  drawWrapped(msg, 10, 70, W - 20, TFT_WHITE, 2);
+
+  if (textBottom) {
+    // Text floats over the photo near the bottom — same per-glyph C_BG background, no tray
+    drawWrapped(msg, 10, 185, W - 20, TFT_WHITE, 2);
+  } else {
+    // Text floats just below the header bar
+    drawWrapped(msg, 10, 70, W - 20, TFT_WHITE, 2);
+  }
 
   // Footer
   const int footerY = H - 18;
-  tft.drawFastHLine(10, footerY - 6, W - 20, C_LINE);
+  if (!textBottom) tft.drawFastHLine(10, footerY - 6, W - 20, C_LINE);
   tft.setTextDatum(MC_DATUM);
   tft.setTextSize(1);
   if (idx < 9) {
