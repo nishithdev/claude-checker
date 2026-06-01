@@ -59,6 +59,12 @@ if ! "$CLI" lib list 2>/dev/null | grep -q "TFT_eSPI"; then
   "$CLI" lib install "TFT_eSPI"
 fi
 
+# ── Ensure TJpg_Decoder is installed ─────────────────────────────────────────
+if ! "$CLI" lib list 2>/dev/null | grep -q "TJpg_Decoder"; then
+  echo "Installing TJpg_Decoder library..."
+  "$CLI" lib install "TJpg_Decoder"
+fi
+
 # ── Patch User_Setup.h ────────────────────────────────────────────────────────
 LIB_DIR=$("$CLI" config dump --format json 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('directories',{}).get('user',''))" 2>/dev/null)

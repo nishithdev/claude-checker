@@ -32,6 +32,8 @@
  */
 
 #include <TFT_eSPI.h>
+#include <SD.h>
+#include <TJpg_Decoder.h>
 
 // XPT2046 touch — IRQ on input-only GPIO, bit-bang SPI on VSPI pins
 #define T_IRQ  36
@@ -39,6 +41,9 @@
 #define T_DIN  32
 #define T_OUT  39
 // TOUCH_CS (33) is defined in User_Setup.h
+
+// SD card — standard VSPI pins on CYD
+#define SD_CS  5
 
 // ── Patchable message slots ──────────────────────────────────────────────────
 // Do NOT edit these manually — use the Web Flasher instead.
@@ -68,8 +73,26 @@ static const char* DEFAULTS[10] = {
   "You had me at hello, and you still have me every day since.",
   "I choose you. Over and over, without pause, without a doubt.",
   "Thank you for being exactly who you are.",
-  "You are my today and all of my tomorrows."
+  "Day 180 together. Each one better than the last. You are my home, my adventure, and my calm. Happy 180, Preethi."
 };
+
+// ── Photo slot ───────────────────────────────────────────────────────────────
+// Full-screen 320×240 RGB565 image patched in by the Web Flasher.
+// Marker byte [7] is '1' (unpatched) or '2' (patched).
+#define IMG_W     320
+#define IMG_H     240
+#define IMG_BYTES (IMG_W * IMG_H * 2)
+
+// PROGMEM keeps this in flash (153 KB is too large for DRAM).
+// volatile read in isImgPatched prevents the compiler constant-folding the check.
+static const uint8_t IMG_DATA[IMG_BYTES + 8] PROGMEM = {
+  '\xAA','\xBB','\xCC','\xDD','I','M','G','1'
+};
+
+bool isImgPatched() {
+  const volatile uint8_t* p = IMG_DATA;
+  return p[7] == '2';
+}
 
 // ── Display ──────────────────────────────────────────────────────────────────
 TFT_eSPI tft = TFT_eSPI();
@@ -89,8 +112,9 @@ static const uint16_t C_DIM   = 0x8B4D;
 static const uint16_t C_LINE  = 0x4812;
 
 // ── State ────────────────────────────────────────────────────────────────────
-int           g_slide    = 0;
-unsigned long g_lastTouch = 0;
+int           g_slide      = 0;
+unsigned long g_lastTouch  = 0;
+bool          g_hasSDPhoto = false;
 
 // ── Touch ────────────────────────────────────────────────────────────────────
 void touchSetup() {
@@ -267,74 +291,274 @@ void drawSlide(int idx) {
   }
 }
 
+// ── SD card JPEG ─────────────────────────────────────────────────────────────
+// Dedicated VSPI instance for the SD card (CYD: SCK=18, MISO=19, MOSI=23, CS=5)
+static SPIClass g_sdSPI(VSPI);
+
+static bool jpegCallback(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* data) {
+  tft.pushImage(x, y, w, h, data);
+  return true;
+}
+
+// Show a small status line at the bottom of the screen during boot.
+static void sdStatus(const char* msg, uint16_t col = 0xC618) {
+  tft.fillRect(0, H - 16, W, 16, C_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(col, C_BG);
+  tft.setTextSize(1);
+  tft.drawString(msg, W/2, H - 8);
+}
+
+// Display /photo.jpg from SD full-screen, scaled to fit 320×240.
+// Returns true if the photo was rendered successfully.
+static bool trySDPhoto() {
+  sdStatus("Looking for SD card...");
+
+  // Explicitly init VSPI with CYD's SD pins — do not rely on SPI global defaults
+  g_sdSPI.begin(18, 19, 23, SD_CS);
+  if (!SD.begin(SD_CS, g_sdSPI, 4000000)) {
+    sdStatus("SD card not found", 0xF800);
+    delay(1200);
+    return false;
+  }
+
+  if (!SD.exists("/photo.jpg")) {
+    sdStatus("photo.jpg not found on SD", 0xFFE0);
+    delay(1500);
+    SD.end();
+    return false;
+  }
+
+  sdStatus("Loading photo...");
+
+  TJpgDec.setSwapBytes(true);
+  TJpgDec.setCallback(jpegCallback);
+
+  uint16_t jw = 0, jh = 0;
+  TJpgDec.getSdJpgSize(&jw, &jh, "/photo.jpg");
+  if (jw == 0 || jh == 0) {
+    sdStatus("JPEG decode failed (try baseline JPEG)", 0xF800);
+    delay(1500);
+    SD.end();
+    return false;
+  }
+
+  // Largest power-of-2 scale where both dimensions fit within the display
+  uint8_t scale = 1;
+  while (scale < 8 && (jw / scale > (uint16_t)W || jh / scale > (uint16_t)H)) scale *= 2;
+  TJpgDec.setJpgScale(scale);
+
+  // Center the (possibly smaller-than-screen) scaled image
+  int32_t ox = ((int32_t)W - jw / scale) / 2;
+  int32_t oy = ((int32_t)H - jh / scale) / 2;
+  tft.fillScreen(C_BG);
+  TJpgDec.drawSdJpg(ox, oy, "/photo.jpg");
+  return true;
+}
+
+// Redraw a photo rectangle — used to "erase" the heart between idle beat frames
+static void restorePhoto(int x, int y, int w, int h) {
+  const uint16_t* img = (const uint16_t*)(IMG_DATA + 8);
+  for (int row = 0; row < h; row++) {
+    int iy = y + row;
+    if (iy < 0 || iy >= IMG_H) continue;
+    int ix = max(0, x);
+    int iw = min(w + min(0, x), IMG_W - ix);
+    if (iw <= 0) continue;
+    tft.pushImage(ix, iy, iw, 1, (uint16_t*)(img + (size_t)iy * IMG_W + ix));
+  }
+}
+
+// Draw gradient fade from photo → C_BG over `fadeH` rows starting at `y0`,
+// then solid C_BG from `y0+fadeH` to bottom.
+static void drawPhotoGradient(int y0, int fadeH) {
+  uint16_t buf[W];
+  const uint16_t* img = (const uint16_t*)(IMG_DATA + 8);
+  uint8_t br = (C_BG >> 11) & 0x1F;
+  uint8_t bg = (C_BG >> 5)  & 0x3F;
+  uint8_t bb =  C_BG        & 0x1F;
+  for (int row = 0; row < fadeH; row++) {
+    int iy = y0 + row;
+    uint8_t a = (uint8_t)((row * 255) / fadeH);
+    const uint16_t* src = img + (size_t)iy * IMG_W;
+    for (int x = 0; x < W; x++) {
+      uint16_t p = src[x];
+      uint8_t pr = (p >> 11) & 0x1F;
+      uint8_t pg = (p >> 5)  & 0x3F;
+      uint8_t pb =  p        & 0x1F;
+      buf[x] = (uint16_t)(
+        (((pr*(255-a) + br*a + 127) >> 8) << 11) |
+        (((pg*(255-a) + bg*a + 127) >> 8) << 5)  |
+         ((pb*(255-a) + bb*a + 127) >> 8)
+      );
+    }
+    tft.pushImage(0, iy, W, 1, buf);
+  }
+  tft.fillRect(0, y0 + fadeH, W, H - (y0 + fadeH), C_BG);
+}
+
 // ── Boot animation ────────────────────────────────────────────────────────────
 void animateSplash() {
   tft.fillScreen(C_BG);
 
-  // Phase 1: central heart grows in, overshoots, settles
-  static const uint8_t kIntro[] = {5, 13, 21, 29, 37, 44, 40, 36};
-  int prevR = 0;
-  for (int i = 0; i < (int)(sizeof(kIntro) / sizeof(kIntro[0])); i++) {
-    int s = kIntro[i];
-    int clearR = max(s, prevR) + 6;
-    tft.fillRect(W/2 - clearR, 85 - clearR, 2 * clearR, 2 * clearR, C_BG);
-    drawHeart(W/2, 85, s, C_HEART);
-    prevR = s;
-    delay(65);
+  // Priority: SD card JPEG > binary-patched image > heart-only
+  g_hasSDPhoto          = trySDPhoto();
+  bool hasBinPhoto      = !g_hasSDPhoto && isImgPatched();
+  int  idleHeartY       = 85;
+
+  // ── SD card photo path ──────────────────────────────────────────────────────
+  if (g_hasSDPhoto) {
+    const int STRIP_Y = 188;   // solid dark strip starts here
+    const int HEART_Y = 200;   // heart centre inside the strip
+    idleHeartY = HEART_Y;
+
+    // Photo is already on screen (drawn by trySDPhoto).
+    // Draw a pink accent line + solid strip over the bottom.
+    delay(80);
+    tft.fillRect(0, STRIP_Y, W, H - STRIP_Y, C_BG);
+    tft.drawFastHLine(0, STRIP_Y, W, C_PINK);
+
+    // Heart pulses in inside the strip
+    static const uint8_t kSP[] = {2, 5, 7, 9, 8, 6};
+    int prevR = 0;
+    for (int i = 0; i < (int)(sizeof(kSP) / sizeof(kSP[0])); i++) {
+      int s = kSP[i];
+      int cr = max(s, prevR) + 4;
+      tft.fillRect(W/2 - cr, HEART_Y - cr, 2*cr, 2*cr, C_BG);
+      drawHeart(W/2, HEART_Y, s, C_HEART);
+      prevR = s;
+      delay(70);
+    }
+
+    // "Hey Preethi," types in
+    static const char kName[] = "Hey Preethi,";
+    tft.setTextSize(2);
+    int nameX = (W - tft.textWidth(kName)) / 2;
+    int nameY = HEART_Y + 16;
+    char nbuf[sizeof(kName)] = {};
+    for (int i = 0; kName[i]; i++) {
+      nbuf[i] = kName[i];
+      tft.fillRect(0, nameY, W, 18, C_BG);
+      tft.setTextDatum(TL_DATUM);
+      tft.setTextColor(C_PINK, C_BG);
+      tft.drawString(nbuf, nameX, nameY);
+      delay(55);
+    }
+    delay(80);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_DIM, C_BG);
+    tft.setTextSize(1);
+    tft.drawString("touch to begin", W/2, nameY + 18);
+
+  // ── Binary flash photo path ─────────────────────────────────────────────────
+  } else if (hasBinPhoto) {
+    const int HEART_Y = 90;
+    const int GRAD_Y  = 192;
+    const int SOLID_Y = 218;
+    idleHeartY = HEART_Y;
+
+    // Sweep binary photo in top-to-bottom
+    for (int row = 0; row < IMG_H; row += 16) {
+      int rows = min(16, IMG_H - row);
+      tft.pushImage(0, row, IMG_W, rows,
+        (uint16_t*)(const_cast<uint8_t*>(IMG_DATA) + 8 + row * IMG_W * 2));
+      delay(6);
+    }
+    delay(60);
+    drawPhotoGradient(GRAD_Y, SOLID_Y - GRAD_Y);
+
+    // Heart pulses in over photo (restores photo pixels each frame)
+    static const uint8_t kIP[] = {5, 13, 21, 29, 37, 44, 40, 36};
+    int prevR = 0;
+    for (int i = 0; i < (int)(sizeof(kIP) / sizeof(kIP[0])); i++) {
+      int s = kIP[i]; int clearR = max(s, prevR) + 6;
+      restorePhoto(W/2 - clearR, HEART_Y - clearR, 2*clearR, 2*clearR);
+      drawHeart(W/2, HEART_Y, s, C_HEART);
+      prevR = s; delay(65);
+    }
+
+    static const char kName[] = "Hey Preethi,";
+    tft.setTextSize(2);
+    int nameX = (W - tft.textWidth(kName)) / 2;
+    int nameY = SOLID_Y + 2;
+    char nbuf[sizeof(kName)] = {};
+    for (int i = 0; kName[i]; i++) {
+      nbuf[i] = kName[i];
+      tft.fillRect(0, nameY, W, 18, C_BG);
+      tft.setTextDatum(TL_DATUM);
+      tft.setTextColor(C_PINK, C_BG);
+      tft.drawString(nbuf, nameX, nameY);
+      delay(55);
+    }
+    delay(80);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_DIM, C_BG);
+    tft.setTextSize(1);
+    tft.drawString("touch to begin", W/2, nameY + 20);
+
+  // ── Heart-only path ─────────────────────────────────────────────────────────
+  } else {
+    idleHeartY = 85;
+
+    static const uint8_t kIntro[] = {5, 13, 21, 29, 37, 44, 40, 36};
+    int prevR = 0;
+    for (int i = 0; i < (int)(sizeof(kIntro) / sizeof(kIntro[0])); i++) {
+      int s = kIntro[i]; int clearR = max(s, prevR) + 6;
+      tft.fillRect(W/2 - clearR, 85 - clearR, 2*clearR, 2*clearR, C_BG);
+      drawHeart(W/2, 85, s, C_HEART);
+      prevR = s; delay(65);
+    }
+
+    delay(80);
+    drawHeart( 30,  30, 8, C_LINE); delay(80);
+    drawHeart(290,  30, 8, C_LINE); delay(80);
+    drawHeart( 30, 210, 8, C_LINE); delay(80);
+    drawHeart(290, 210, 8, C_LINE); delay(80);
+    drawHeart(160,  18, 6, C_LINE); delay(80);
+
+    static const char kTitle[] = "Hey Preethi,";
+    tft.setTextSize(2);
+    int titleX = (W - tft.textWidth(kTitle)) / 2;
+    int titleY = 132;
+    char tbuf[sizeof(kTitle)] = {};
+    for (int i = 0; kTitle[i]; i++) {
+      tbuf[i] = kTitle[i];
+      tft.fillRect(0, titleY, W, 18, C_BG);
+      tft.setTextDatum(TL_DATUM);
+      tft.setTextColor(C_PINK, C_BG);
+      tft.drawString(tbuf, titleX, titleY);
+      delay(55);
+    }
+
+    delay(120);
+    int spc = W / 7;
+    for (int i = 0; i < 7; i++) { drawHeart(spc/2 + i*spc, 220, 5, C_LINE); delay(70); }
+    delay(100);
+    tft.setTextColor(C_DIM, C_BG);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(1);
+    tft.drawString("touch to begin", W/2, 164);
   }
 
-  // Phase 2: corner accent hearts pop in
-  delay(80);
-  drawHeart( 30,  30, 8, C_LINE); delay(80);
-  drawHeart(290,  30, 8, C_LINE); delay(80);
-  drawHeart( 30, 210, 8, C_LINE); delay(80);
-  drawHeart(290, 210, 8, C_LINE); delay(80);
-  drawHeart(160,  18, 6, C_LINE); delay(80);
+  // ── Idle heartbeat — all paths ──────────────────────────────────────────────
+  static const int8_t kBeatBig[]  = {38, 41, 38, 36};
+  static const int8_t kBeatSmall[] = {6, 8, 6, 5};
+  const int8_t* kBeat = g_hasSDPhoto ? kBeatSmall : kBeatBig;
+  int beatR           = g_hasSDPhoto ? 6 : 36;
 
-  // Phase 3: title types in character by character
-  static const char kTitle[] = "A message for you";
-  tft.setTextSize(2);
-  int titleX = (W - tft.textWidth(kTitle)) / 2;
-  int titleY = 132;
-  char buf[sizeof(kTitle)] = {};
-  for (int i = 0; kTitle[i]; i++) {
-    buf[i] = kTitle[i];
-    tft.fillRect(0, titleY, W, 18, C_BG);
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(C_PINK, C_BG);
-    tft.drawString(buf, titleX, titleY);
-    delay(55);
-  }
-
-  // Phase 4: bottom heart row appears left to right
-  delay(120);
-  int spacing = W / 7;
-  for (int i = 0; i < 7; i++) {
-    drawHeart(spacing / 2 + i * spacing, 220, 5, C_LINE);
-    delay(70);
-  }
-
-  // Touch hint
-  delay(100);
-  tft.setTextColor(C_DIM, C_BG);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextSize(1);
-  tft.drawString("touch to begin", W/2, 164);
-
-  // Idle heartbeat loop — keeps animating until the screen is touched
-  // Clears only the heart bounding box per frame so nothing else flickers
-  static const int8_t kBeat[] = {38, 41, 38, 36};
-  int beatR = 36;
   while (!isTouched()) {
     for (int b = 0; b < 4 && !isTouched(); b++) {
       int s = kBeat[b];
       int clearR = max(s, beatR) + 4;
-      tft.fillRect(W/2 - clearR, 85 - clearR, 2 * clearR, 2 * clearR, C_BG);
-      drawHeart(W/2, 85, s, C_HEART);
+      if (hasBinPhoto) {
+        restorePhoto(W/2 - clearR, idleHeartY - clearR, 2*clearR, 2*clearR);
+      } else {
+        tft.fillRect(W/2 - clearR, idleHeartY - clearR, 2*clearR, 2*clearR, C_BG);
+      }
+      drawHeart(W/2, idleHeartY, s, C_HEART);
       beatR = s;
       delay(55);
     }
-    // Rest between beats (~60 BPM)
     unsigned long t = millis();
     while (!isTouched() && millis() - t < 700) delay(20);
   }
